@@ -10,7 +10,7 @@ import {
 import { getHostIp } from "../../utils/net-utils";
 import { writeLocalJsonFile } from "../../utils/fs-utils";
 const fs = require("fs").promises;
-import { fileMap } from "../../types";
+import { ComputedNetwork, fileMap } from "../../types";
 import { Client, RunCommandResponse, setClient } from "../client";
 import { decorators } from "../../utils/colors";
 import YAML from "yaml";
@@ -78,7 +78,7 @@ export class PodmanClient extends Client {
   }
 
   // start a grafana and prometheus
-  async staticSetup(settings: any): Promise<void> {
+  async staticSetup(_networkConfig: ComputedNetwork, _isPodMonitorAvailable: boolean): Promise<void> {
     const prometheusSpec = await genPrometheusDef(this.namespace);
     const promPort = prometheusSpec.spec.containers[0].ports[0].hostPort;
     await this.createResource(prometheusSpec, false, true);
@@ -90,7 +90,6 @@ export class PodmanClient extends Client {
 
     const tempoSpec = await genTempoDef(this.namespace);
     await this.createResource(tempoSpec, false, false);
-    const jaegerPort = tempoSpec.spec.containers[0].ports[0].hostPort;
     const tempoPort = tempoSpec.spec.containers[0].ports[1].hostPort;
     console.log(
       `\n\t Monitor: ${decorators.green(

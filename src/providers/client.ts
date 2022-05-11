@@ -1,4 +1,4 @@
-import { fileMap } from "../types";
+import { ComputedNetwork, fileMap } from "../types";
 
 export interface RunCommandResponse {
   exitCode: number;
@@ -35,7 +35,7 @@ export abstract class Client {
   }
 
   abstract createNamespace(): Promise<void>;
-  abstract staticSetup(settings: any): Promise<void>;
+  abstract staticSetup(networkConfig: ComputedNetwork, isPodMonitorAvailable: boolean): Promise<void>;
   abstract destroyNamespace(): Promise<void>;
   abstract getNodeLogs(
     podName: string,

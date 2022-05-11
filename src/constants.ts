@@ -47,6 +47,11 @@ export const BAKCCHANNEL_POD_NAME = "backchannel";
 export const INTROSPECTOR_PORT = 65432;
 export const INTROSPECTOR_POD_NAME = "introspector";
 
+
+export const PROMETHEUS_WEB_PORT = 9090;
+export const TEMPO_WEB_PORT = 3100;
+export const GRAFANA_WEB_PORT = 3000;
+
 // Spans collator config
 export const TRACING_COLLATOR_NAME = "tracing_collator";
 export const TRACING_COLLATOR_SERVICE = "tempo-tempo-distributed-query-frontend"; // tempo installation in k8s

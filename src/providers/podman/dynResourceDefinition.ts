@@ -145,25 +145,13 @@ export async function genGrafanaDef(
     },
   ];
 
-  const datasource = `
-# config file version
-apiVersion: 1
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    orgId: 1
-    url: http://${prometheusIp}:9090
-    version: 1
-    editable: true
-  - name: Tempo
-    type: tempo
-    access: proxy
-    orgId: 1
-    url: http://${tempoIp}:3200
-    version: 1
-    editable: true
-`;
+  const grafanaDatasourcesConfigPath = resolve(__dirname, `../../../static-configs/grafana-datasources.yaml`);
+
+  let datasource = await fs.readFile(grafanaDatasourcesConfigPath);
+  datasource = datasource
+    .toString("utf-8")
+    .replace(/{{PROMETHEUS_IP}}/gi, prometheusIp)
+    .replace(/{{TEMPO_IP}}/gi, tempoIp);
 
   await fs.writeFile(`${datasourcesPath}/prometheus.yml`, datasource);
 
@@ -297,6 +285,10 @@ export async function genTempoDef(
       containerPort: 9411,
       name: "zipkin",
       hostPort: await getRandomPort(),
+    }, {
+      containerPort: 6831,
+      name: "jaeger-udp",
+      protocol: "UDP"
     }
   ];
 

@@ -222,3 +222,179 @@ export function createTempNodeDef(
 
   return node;
 }
+
+// monitoring for k8s clusters not hosted by Parity
+export async function genPrometheusDef(namespace: string): Promise<any> {
+  const [volume_mounts, devices] = make_volume_mounts();
+  const transferContainter = make_transfer_containter();
+  const prometheusConfigVolume = {
+    name: "prometheus-cfg",
+    mountPath: "/etc/prometheus",
+    readOnly: false,
+  };
+
+  volume_mounts.push(prometheusConfigVolume);
+  transferContainter.volumeMounts.push(prometheusConfigVolume);
+  devices.push({ name: "prometheus-cfg" });
+
+  const ports = [
+    {
+      containerPort: 9090,
+      name: "prometheus"
+    },
+  ];
+
+  const containerDef = {
+    image: "prom/prometheus",
+    name: "prometheus",
+    imagePullPolicy: "Always",
+    ports,
+    volumeMounts: volume_mounts,
+  };
+
+  return {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "prometheus",
+      namespace: namespace,
+      labels: {
+        "app.kubernetes.io/name": namespace,
+        "app.kubernetes.io/instance": "prometheus",
+        "zombie-role": "prometheus",
+        app: "zombienet",
+        "zombie-ns": namespace,
+      },
+    },
+    spec: {
+      hostname: "prometheus",
+      initContainers: [transferContainter],
+      containers: [containerDef],
+      restartPolicy: "OnFailure",
+      volumes: devices,
+    },
+  };
+}
+
+export async function genGrafanaDef(namespace: string): Promise<any> {
+  const [volume_mounts, devices] = make_volume_mounts();
+  const transferContainter = make_transfer_containter();
+  const datasourceVolume = {
+    name: "datasources-cfg",
+    mountPath: "/etc/grafana/provisioning/datasources",
+    readOnly: false,
+  };
+
+  transferContainter.volumeMounts.push(datasourceVolume);
+  volume_mounts.push(datasourceVolume);
+
+  devices.push({ name: "datasources-cfg" });
+
+  const ports = [
+    {
+      containerPort: 3000,
+      name: "grafana"
+    },
+  ];
+
+  const containerDef = {
+    image: "grafana/grafana",
+    name: "grafana",
+    imagePullPolicy: "Always",
+    ports,
+    volumeMounts: volume_mounts,
+  };
+
+  return {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "grafana",
+      namespace: namespace,
+      labels: {
+        "app.kubernetes.io/name": namespace,
+        "app.kubernetes.io/instance": "grafana",
+        "zombie-role": "grafana",
+        app: "zombienet",
+        "zombie-ns": namespace,
+      },
+    },
+    spec: {
+      hostname: "grafana",
+      initContainers: [transferContainter],
+      containers: [containerDef],
+      restartPolicy: "OnFailure",
+      volumes: devices,
+    },
+  };
+}
+
+export async function genTempoDef(
+  namespace: string
+): Promise<any> {
+  const [volume_mounts, devices] = make_volume_mounts();
+  const transferContainter = make_transfer_containter();
+  const tempoConfigVolume = {name: "tempo-cfg", mountPath: "/etc/tempo", readOnly: false};
+  transferContainter.volumeMounts.push(tempoConfigVolume);
+  volume_mounts.push(tempoConfigVolume);
+  devices.push({name: "tempo-cfg"});
+
+  const ports = [
+    {
+      containerPort: 14268,
+      name: "jaeger-ingest",
+    },
+    {
+      containerPort: 3100,
+      name: "tempo",
+    },
+    {
+      containerPort: 4317,
+      name: "otlp-grpc",
+    },
+    {
+      containerPort: 4318,
+      name: "otlp-http",
+    },
+    {
+      containerPort: 9411,
+      name: "zipkin",
+    }, {
+      containerPort: 6831,
+      name: "jaeger-udp",
+      protocol: "UDP"
+    }
+  ];
+
+  const containerDef = {
+    image: "grafana/tempo:latest",
+    name: "tempo",
+    args: [ "-config.file=/etc/tempo/tempo.yaml" ],
+    imagePullPolicy: "Always",
+    ports,
+    volumeMounts: volume_mounts,
+  };
+
+  return {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "tempo",
+      namespace: namespace,
+      labels: {
+        "app.kubernetes.io/name": namespace,
+        "app.kubernetes.io/instance": "tempo",
+        "zombie-role": "tempo",
+        app: "zombienet",
+        "zombie-ns": namespace,
+      },
+    },
+    spec: {
+      hostname: "tempo",
+      initContainers: [transferContainter],
+      containers: [containerDef],
+      restartPolicy: "OnFailure",
+      volumes: devices,
+    },
+  };
+}

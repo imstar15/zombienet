@@ -7,7 +7,7 @@ import {
 import { writeLocalJsonFile } from "../../utils/fs-utils";
 const fs = require("fs");
 import { copy as fseCopy } from "fs-extra";
-import { fileMap } from "../../types";
+import { ComputedNetwork, fileMap } from "../../types";
 import { Client, RunCommandResponse, setClient } from "../client";
 import { decorators } from "../../utils/colors";
 import YAML from "yaml";
@@ -86,7 +86,7 @@ export class NativeClient extends Client {
     return;
   }
   // Podman ONLY support `pods`
-  async staticSetup(_: any): Promise<void> {
+  async staticSetup(_networkConfig: ComputedNetwork, _isPodMonitorAvailable: boolean): Promise<void> {
     return;
   }
 

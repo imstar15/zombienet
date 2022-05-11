@@ -179,10 +179,15 @@ export async function start(
       debug("Cleanner job configured");
     }
 
+    const monitorIsAvailable = await client.isPodMonitorAvailable();
+
     // Create bootnode and backchannel services
     debug(`Creating static resources (bootnode and backchannel services)`);
-    await client.staticSetup(networkSpec.settings);
-    await client.createPodMonitor("pod-monitor.yaml", chainName);
+    await client.staticSetup(networkSpec, monitorIsAvailable);
+    // if(monitorIsAvailable) await client.createPodMonitor("pod-monitor.yaml", chainName)
+    // else {
+
+    // }
 
     // create or copy chain spec
     await setupChainSpec(
@@ -307,7 +312,7 @@ export async function start(
       networkSpec.relaychain.nodes.unshift(bootnodeSpec);
     }
 
-    const monitorIsAvailable = await client.isPodMonitorAvailable();
+
     let jaegerUrl: string;
     if(client.providerName === "podman") {
       const jaegerIp = await client.getNodeIP("tempo");
@@ -470,7 +475,7 @@ export async function start(
             );
             break;
           case "kubernetes":
-            console.log(`\n\t\t\t kubectl logs -f ${podDef.metadata.name}`);
+            console.log(`\n\t\t\t kubectl logs -f ${podDef.metadata.name} -c ${podDef.metadata.name} -n ${namespace}`);
             break;
           case "native":
             console.log(
@@ -596,7 +601,6 @@ export async function start(
             try {
               const tracingPort = await client.startPortForwarding(servicePort, `service/${serviceName}`, serviceNamespace);
               network.tracingCollatorUrl = `http://localhost:${tracingPort}`;
-              console.log(network.tracingCollatorUrl);
             } catch(_) {
               console.log(decorators.yellow(`\n\t Warn: Can not create the forwarding to the tracing collator`));
             }

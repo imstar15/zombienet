@@ -4,16 +4,21 @@ import {
   DEFAULT_DATA_DIR,
   DEFAULT_REMOTE_DIR,
   FINISH_MAGIC_FILE,
+  GRAFANA_WEB_PORT,
   P2P_PORT,
+  PROMETHEUS_PORT,
+  PROMETHEUS_WEB_PORT,
+  TEMPO_WEB_PORT,
   TRANSFER_CONTAINER_NAME,
 } from "../../constants";
 import { addMinutes, getSha256 } from "../../utils/misc-utils";
 import { writeLocalJsonFile } from "../../utils/fs-utils";
 const fs = require("fs").promises;
 import { spawn } from "child_process";
-import { fileMap } from "../../types";
+import { ComputedNetwork, fileMap } from "../../types";
 import { Client, RunCommandResponse, setClient } from "../client";
 import { decorators } from "../../utils/colors";
+import { genGrafanaDef, genPrometheusDef, genTempoDef } from "./dynResourceDefinition";
 
 const debug = require("debug")("zombie::kube::client");
 
@@ -85,7 +90,7 @@ export class KubeClient extends Client {
   async spawnFromDef(
     podDef: any,
     filesToCopy: fileMap[] = [],
-    keystore: string
+    keystore?: string
   ): Promise<void> {
     const name = podDef.metadata.name;
     writeLocalJsonFile(this.tmpDir, `${name}.json`, podDef);
@@ -94,11 +99,13 @@ export class KubeClient extends Client {
         podDef.metadata.name
       )} pod with image ${decorators.green(podDef.spec.containers[0].image)}`
     );
+    if(podDef.spec.containers[0].command) {
     console.log(
-      `\t\t with command: ${decorators.magenta(
-        podDef.spec.containers[0].command.join(" ")
-      )}`
-    );
+        `\t\t with command: ${decorators.magenta(
+          podDef.spec.containers[0].command.join(" ")
+        )}`
+      );
+    }
 
     await this.createResource(podDef, true, false);
     await this.wait_transfer_container(name);
@@ -143,6 +150,7 @@ export class KubeClient extends Client {
 
     await this.putLocalMagicFile(name);
     await this.wait_pod_ready(name);
+    if(! this.podMonitorAvailable) await this.addNodeToPrometheus(name);
     console.log(`\t\t${decorators.green(name)} pod is ready!`);
   }
 
@@ -186,8 +194,10 @@ export class KubeClient extends Client {
         if (["Running", "Succeeded"].includes(status.phase)) return;
 
         // check if we are waiting init container
-        for (const s of status.initContainerStatuses) {
-          if (s.name === TRANSFER_CONTAINER_NAME && s.state.running) return;
+        if(status.initContainerStatuses) {
+          for (const s of status.initContainerStatuses) {
+            if (s.name === TRANSFER_CONTAINER_NAME && s.state.running) return;
+          }
         }
 
         await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -320,7 +330,7 @@ export class KubeClient extends Client {
       const parts = localFilePath.split("/");
       const fileName = parts[parts.length - 1];
       if (!fileUploadCache[hashedName]) {
-        console.log(
+        debug(
           "uploading to fileserver: " + localFilePath + " as:" + hashedName
         );
         const args = [
@@ -403,7 +413,8 @@ export class KubeClient extends Client {
     return [ip, port ? port : P2P_PORT];
   }
 
-  async staticSetup(settings: any) {
+  async staticSetup(networkConfig: ComputedNetwork, isPodMonitorAvailable: boolean) {
+    let { settings } = networkConfig;
     let storageFiles: string[] = (await this.runningOnMinikube())
       ? [
           "node-data-tmp-storage-class-minikube.yaml",
@@ -437,6 +448,74 @@ export class KubeClient extends Client {
       for (const file of resourceType.files) {
         if(file) await this.createStaticResource(file);
       }
+    }
+
+    if(isPodMonitorAvailable) this.createPodMonitor("pod-monitor.yaml", networkConfig.relaychain.chain);
+    else {
+      // spawn the monitoring infra
+      const prometheusSpec = await genPrometheusDef(this.namespace);
+      const promPort = prometheusSpec.spec.containers[0].ports[0].hostPort;
+      // await this.createResource(prometheusSpec, false, true);
+      const prometheusConfigPath = resolve(__dirname, `../../../static-configs/prometheus-config-local.yml`);
+      await this.spawnFromDef(prometheusSpec,[ {
+        localFilePath: prometheusConfigPath,
+        remoteFilePath: "/etc/prometheus/prometheus.yml",
+        unique: true
+      }]);
+      const prometheusFwdPort = await this.startPortForwarding(PROMETHEUS_WEB_PORT, "prometheus" );
+      console.log(
+        `\n\t Monitor: ${decorators.green(
+          prometheusSpec.metadata.name
+        )} - url: http://127.0.0.1:${prometheusFwdPort}`
+      );
+
+      const tempoSpec = await genTempoDef(this.namespace);
+      const tempoConfigPath = resolve(__dirname, `../../../static-configs/tempo.yaml`);
+      await this.spawnFromDef(tempoSpec,[ {
+        localFilePath: tempoConfigPath,
+        remoteFilePath: "/etc/tempo/tempo.yaml",
+        unique: true
+      }]);
+
+      const tempoFwdPort = await this.startPortForwarding(TEMPO_WEB_PORT, "tempo" );
+
+      console.log(
+        `\n\t Monitor: ${decorators.green(
+          tempoSpec.metadata.name
+        )} - url: http://127.0.0.1:${tempoFwdPort}`
+      );
+
+      const tempoIp = await this.getNodeIP("tempo");
+
+      // set values of the new infra
+      if(!process.env.ZOMBIE_JAEGER_URL) process.env.ZOMBIE_JAEGER_URL = `${tempoIp}:6831`;
+      if(!settings.tracing_collator_url) settings.tracing_collator_url =  `http://127.0.0.1:${tempoFwdPort}`;
+
+      const prometheusIp = await this.getNodeIP("prometheus");
+
+      const grafanaSpec = await genGrafanaDef(this.namespace);
+      const grafanaDatasourcesConfigPath = resolve(__dirname, `../../../static-configs/grafana-datasources.yaml`);
+      let datasource = await fs.readFile(grafanaDatasourcesConfigPath);
+      datasource = datasource
+        .toString("utf-8")
+        .replace(/{{PROMETHEUS_IP}}/gi, prometheusIp)
+        .replace(/{{TEMPO_IP}}/gi, tempoIp);
+
+
+      const grafanaDatasourcesPath = `${this.tmpDir}/grafana-datasources.yml`;
+      await fs.writeFile(grafanaDatasourcesPath, datasource);
+      await this.spawnFromDef(grafanaSpec, [{
+        localFilePath: grafanaDatasourcesPath,
+        remoteFilePath: "/etc/grafana/provisioning/datasources/prometheus.yml",
+        unique: true
+      }]);
+
+      const grafanaFwdPort = await this.startPortForwarding(GRAFANA_WEB_PORT, "grafana" );
+      console.log(
+        `\n\t Monitor: ${decorators.green(
+          grafanaSpec.metadata.name
+        )} - url: http://127.0.0.1:${grafanaFwdPort}`
+      );
     }
   }
 
@@ -543,6 +622,17 @@ export class KubeClient extends Client {
     });
   }
 
+  async addNodeToPrometheus(podName: string) {
+    const podIp = await this.getNodeIP(podName);
+    const content = `[{"labels": {"pod": "${podName}"}, "targets": ["${podIp}:${PROMETHEUS_PORT}"]}]`;
+    await fs.writeFile(
+      `${this.tmpDir}/sd_config_${podName}.json`,
+      content
+    );
+
+    if(podName !== "prometheus") await this.copyFileToPod("prometheus", `${this.tmpDir}/sd_config_${podName}.json`,`/data/sd_config_${podName}.json`, "prometheus", true);
+  }
+
   async getNodeLogs(
     podName: string,
     since: number | undefined = undefined,
@@ -589,16 +679,15 @@ export class KubeClient extends Client {
   }
 
   async isPodMonitorAvailable() {
-    let available = false;
     try {
       const result = await execa.command("kubectl api-resources -o name");
       if (result.exitCode == 0) {
-        if (result.stdout.includes("podmonitor")) available = true;
+        if (result.stdout.includes("podmonitor")) this.podMonitorAvailable = true;
       }
     } catch (err) {
       console.log(err);
     } finally {
-      return available;
+      return this.podMonitorAvailable;
     }
   }
 
