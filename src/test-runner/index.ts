@@ -10,7 +10,7 @@ import { decorators } from "../utils/colors";
 import { readNetworkConfig } from "../utils/fs";
 import { getLokiUrl, sleep } from "../utils/misc";
 import assertions from "./assertions";
-import commnads from "./commnads";
+import commands from "./commands";
 
 import zombie from "../";
 
@@ -94,17 +94,15 @@ export async function run(
             `Invalid provider, the provider set doesn't match with the running network definition`,
           );
 
-        const { namespace, tmpDir } = runningNetworkSpec;
+        const { client, namespace, tmpDir } = runningNetworkSpec;
         // initialize the Client
-        const client = Providers.get(
-          runningNetworkSpec.client.providerName,
-        ).initClient(
-          runningNetworkSpec.client.configPath,
-          runningNetworkSpec.namespace,
-          runningNetworkSpec.tmpDir,
+        const cl = Providers.get(client.providerName).initClient(
+          client.configPath,
+          namespace,
+          tmpDir,
         );
         // initialize the network
-        network = rebuildNetwork(client, runningNetworkSpec);
+        network = rebuildNetwork(cl, runningNetworkSpec);
       }
 
       network.showNetworkInfo(config.settings.provider);
@@ -264,5 +262,5 @@ const exitMocha = (code: number) => {
 type Fns = { [key: string]: Function };
 const fns: Fns = {
   ...assertions,
-  ...commnads,
+  ...commands,
 };
