@@ -1,15 +1,13 @@
-import { decorators } from "./utils/colors";
 import {
   DEFAULT_COMMAND,
-  DEV_ACCOUNTS,
   P2P_PORT,
   PROMETHEUS_PORT,
   RPC_HTTP_PORT,
   RPC_WS_PORT,
 } from "./constants";
 import { Node } from "./types";
-import { getRandomPort } from "./utils/net-utils";
-import { node } from "execa";
+import { decorators } from "./utils/colors";
+import { getRandomPort } from "./utils/net";
 
 const debug = require("debug")("zombie::cmdGenerator");
 

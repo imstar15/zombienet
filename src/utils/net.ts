@@ -1,6 +1,6 @@
+import dns from "dns";
 import { AddressInfo, createServer } from "net";
-const dns = require("dns");
-const os = require("os");
+import os from "os";
 
 export async function getRandomPort(): Promise<number> {
   const inner = async () => {

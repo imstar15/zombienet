@@ -1,18 +1,19 @@
 import { genCmd, genCumulusCollatorCmd } from "../../cmdGenerator";
+import { getUniqueName } from "../../configGenerator";
 import {
-  PROMETHEUS_PORT,
   FINISH_MAGIC_FILE,
-  TRANSFER_CONTAINER_NAME,
-  WAIT_UNTIL_SCRIPT_SUFIX,
+  P2P_PORT,
+  PROMETHEUS_PORT,
   RPC_HTTP_PORT,
   RPC_WS_PORT,
-  P2P_PORT,
+  TMP_DONE,
+  TRANSFER_CONTAINER_NAME,
+  WAIT_UNTIL_SCRIPT_SUFIX,
 } from "../../constants";
-import { getUniqueName } from "../../configGenerator";
-import { Node } from "../../types";
-import { getSha256 } from "../../utils/misc-utils";
 import { Network } from "../../network";
-import { getRandomPort } from "../../utils/net-utils";
+import { Node } from "../../types";
+import { getSha256 } from "../../utils/misc";
+import { getRandomPort } from "../../utils/net";
 
 export async function genBootnodeDef(
   namespace: string,
@@ -110,7 +111,17 @@ function make_transfer_containter(): any {
     command: [
       "ash",
       "-c",
-      `until [ -f ${FINISH_MAGIC_FILE} ]; do echo waiting for tar to finish; sleep 1; done; echo copy files has finished`,
+      [
+        "wget https://github.com/moparisthebest/static-curl/releases/download/v7.83.1/curl-amd64 -O /cfg/curl",
+        "&&",
+        "echo downloaded",
+        "&&",
+        "chmod +x /cfg/curl",
+        "&&",
+        "echo chmoded",
+        "&&",
+        `until [ -f ${FINISH_MAGIC_FILE} ]; do echo waiting for tar to finish; sleep 1; done; echo copy files has finished`,
+      ].join(" "),
     ],
   };
 }
@@ -224,9 +235,11 @@ export async function createTempNodeDef(
     name: nodeName,
     key: getSha256(nodeName),
     image,
-    fullCommand: fullCommand + " && " + WAIT_UNTIL_SCRIPT_SUFIX, // leave the pod runnig until we finish transfer files
+    fullCommand:
+      fullCommand + " && " + TMP_DONE + " && " + WAIT_UNTIL_SCRIPT_SUFIX, // leave the pod runnig until we finish transfer files
     chain,
     validator: false,
+    invulnerable: false,
     bootnodes: [],
     args: [],
     env: [],

@@ -1,19 +1,10 @@
-import path, { resolve } from "path";
 import fs from "fs";
+import path, { resolve } from "path";
 
-import {
-  LaunchConfig,
-  ComputedNetwork,
-  Node,
-  Parachain,
-  Override,
-  NodeConfig,
-  envVars,
-} from "./types";
-import { getSha256 } from "./utils/misc-utils";
 import {
   ARGS_TO_REMOVE,
   DEFAULT_ADDER_COLLATOR_BIN,
+  DEFAULT_BALANCE,
   DEFAULT_CHAIN,
   DEFAULT_CHAIN_SPEC_COMMAND,
   DEFAULT_COLLATOR_IMAGE,
@@ -21,16 +12,26 @@ import {
   DEFAULT_GENESIS_GENERATE_SUBCOMMAND,
   DEFAULT_GLOBAL_TIMEOUT,
   DEFAULT_IMAGE,
+  DEFAULT_MAX_NOMINATIONS,
   DEFAULT_PORTS,
   DEFAULT_WASM_GENERATE_SUBCOMMAND,
-  DEV_ACCOUNTS,
   GENESIS_STATE_FILENAME,
   GENESIS_WASM_FILENAME,
-  RPC_WS_PORT,
   ZOMBIE_WRAPPER,
 } from "./constants";
 import { generateKeyForNode } from "./keys";
-import { getRandomPort } from "./utils/net-utils";
+import { decorate, PARA, whichPara } from "./paras-decorators";
+import {
+  ComputedNetwork,
+  envVars,
+  LaunchConfig,
+  Node,
+  NodeConfig,
+  Override,
+  Parachain,
+} from "./types";
+import { getSha256 } from "./utils/misc";
+import { getRandomPort } from "./utils/net";
 
 const debug = require("debug")("zombie::config-manager");
 
@@ -70,6 +71,9 @@ export async function generateNetworkSpec(
       defaultImage: config.relaychain.default_image || DEFAULT_IMAGE,
       defaultCommand: config.relaychain.default_command || DEFAULT_COMMAND,
       defaultArgs: config.relaychain.default_args || [],
+      randomNominatorsCount: config.relaychain?.random_nominators_count || 0,
+      maxNominations:
+        config.relaychain?.max_nominations || DEFAULT_MAX_NOMINATIONS,
       nodes: [],
       chain: config.relaychain.chain || DEFAULT_CHAIN,
       overrides: globalOverrides,
@@ -137,6 +141,8 @@ export async function generateNetworkSpec(
         command: nodeGroup.command,
         args: sanitizeArgs(nodeGroup.args || []),
         validator: true, // groups are always validators
+        invulnerable: false,
+        balance: DEFAULT_BALANCE,
         env: nodeGroup.env,
         overrides: nodeGroup.overrides,
         resources:
@@ -159,6 +165,8 @@ export async function generateNetworkSpec(
 
   if (config.parachains && config.parachains.length) {
     for (const parachain of config.parachains) {
+      const para: PARA = whichPara(parachain.chain || "");
+
       let computedStatePath,
         computedStateCommand,
         computedWasmPath,
@@ -175,6 +183,7 @@ export async function generateNetworkSpec(
             parachain.collator,
             parachain.id,
             chainName,
+            para,
             bootnodes,
             Boolean(parachain.cumulus_based),
           ),
@@ -186,6 +195,7 @@ export async function generateNetworkSpec(
             collatorConfig,
             parachain.id,
             chainName,
+            para,
             bootnodes,
             Boolean(parachain.cumulus_based),
           ),
@@ -200,6 +210,8 @@ export async function generateNetworkSpec(
             command: collatorGroup.command,
             args: sanitizeArgs(collatorGroup.args || []),
             validator: true, // groups are always validators
+            invulnerable: false,
+            balance: DEFAULT_BALANCE,
             env: collatorGroup.env,
             overrides: collatorGroup.overrides,
             resources:
@@ -212,6 +224,7 @@ export async function generateNetworkSpec(
               node,
               parachain.id,
               chainName,
+              para,
               bootnodes,
               Boolean(parachain.cumulus_based),
             ),
@@ -279,6 +292,7 @@ export async function generateNetworkSpec(
       let parachainSetup: Parachain = {
         id: parachain.id,
         name: getUniqueName(parachain.id.toString()),
+        para,
         cumulusBased: parachain.cumulus_based || false,
         addToGenesis:
           parachain.add_to_genesis === undefined
@@ -325,7 +339,7 @@ export async function generateNetworkSpec(
   }
 
   networkSpec.types = config.types ? config.types : {};
-  if (config.hrmpChannels) networkSpec.hrmpChannels = config.hrmpChannels;
+  if (config.hrmp_channels) networkSpec.hrmp_channels = config.hrmp_channels;
 
   return networkSpec as ComputedNetwork;
 }
@@ -351,6 +365,7 @@ export async function generateBootnodeSpec(
     image: config.relaychain.defaultImage || DEFAULT_IMAGE,
     chain: config.relaychain.chain,
     validator: false,
+    invulnerable: false,
     args: [
       "--ws-external",
       "--rpc-external",
@@ -411,6 +426,7 @@ async function getCollatorNodeFromConfig(
   collatorConfig: NodeConfig,
   para_id: number,
   chain: string, // relay-chain
+  para: PARA,
   bootnodes: string[], // parachain bootnodes
   cumulusBased: boolean,
 ): Promise<Node> {
@@ -424,14 +440,15 @@ async function getCollatorNodeFromConfig(
   ];
   if (collatorConfig.env) env.push(...collatorConfig.env);
 
-  const collatorBinary = collatorConfig.commandWithArgs
-    ? collatorConfig.commandWithArgs.split(" ")[0]
+  const collatorBinary = collatorConfig.command_with_args
+    ? collatorConfig.command_with_args.split(" ")[0]
     : collatorConfig.command
     ? collatorConfig.command
     : DEFAULT_ADDER_COLLATOR_BIN;
 
   const collatorName = getUniqueName(collatorConfig.name || "collator");
-  const accountsForNode = await generateKeyForNode(collatorName);
+  const [decoratedKeysGenerator] = decorate(para, [generateKeyForNode]);
+  const accountsForNode = await decoratedKeysGenerator(collatorName);
 
   const ports =
     networkSpec.settings.provider !== "native"
@@ -449,9 +466,11 @@ async function getCollatorNodeFromConfig(
     key: getSha256(collatorName),
     accounts: accountsForNode,
     validator: collatorConfig.validator !== false ? true : false, // --collator and --force-authoring by default
+    invulnerable: collatorConfig.invulnerable,
+    balance: collatorConfig.balance,
     image: collatorConfig.image || DEFAULT_COLLATOR_IMAGE,
     command: collatorBinary,
-    commandWithArgs: collatorConfig.commandWithArgs,
+    commandWithArgs: collatorConfig.command_with_args,
     args: collatorConfig.args || [],
     chain,
     bootnodes,
@@ -482,7 +501,6 @@ async function getNodeFromConfig(
   if (node.args) args = args.concat(sanitizeArgs(node.args));
 
   const uniqueArgs = [...new Set(args)];
-
   const env = node.env ? DEFAULT_ENV.concat(node.env) : DEFAULT_ENV;
 
   let nodeOverrides: Override[] = [];
@@ -529,10 +547,12 @@ async function getNodeFromConfig(
     key: getSha256(nodeName),
     accounts: accountsForNode,
     command: command || DEFAULT_COMMAND,
-    commandWithArgs: node.commandWithArgs,
+    commandWithArgs: node.command_with_args,
     image: image || DEFAULT_IMAGE,
     chain: networkSpec.relaychain.chain,
     validator: isValidator,
+    invulnerable: node.invulnerable,
+    balance: node.balance,
     args: uniqueArgs,
     env,
     bootnodes: relayChainBootnodes,
@@ -557,20 +577,23 @@ function sanitizeArgs(args: string[]): string[] {
   // Do NOT filter any argument to the internal full-node of the collator
 
   let removeNext = false;
-  const filteredArgs = args.slice(0, args.indexOf("--")).filter((arg) => {
-    if (removeNext) {
-      removeNext = false;
-      return false;
-    }
+  const separatorIndex = args.indexOf("--");
+  const filteredArgs = args
+    .slice(0, separatorIndex >= 0 ? separatorIndex : args.length)
+    .filter((arg) => {
+      if (removeNext) {
+        removeNext = false;
+        return false;
+      }
 
-    const argParsed = arg === "-d" ? "d" : arg.replace(/--/g, "");
-    if (ARGS_TO_REMOVE[argParsed]) {
-      if (ARGS_TO_REMOVE[argParsed] === 2) removeNext = true;
-      return false;
-    } else {
-      return true;
-    }
-  });
+      const argParsed = arg === "-d" ? "d" : arg.replace(/--/g, "");
+      if (ARGS_TO_REMOVE[argParsed]) {
+        if (ARGS_TO_REMOVE[argParsed] === 2) removeNext = true;
+        return false;
+      } else {
+        return true;
+      }
+    });
 
   return filteredArgs;
 }

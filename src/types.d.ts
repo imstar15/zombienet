@@ -1,14 +1,20 @@
 // Launch Config, there are used user-input
 // mapped from the json/toml to compute the
+
+import { PARA } from "./paras-decorators";
+
 // network config to spawn.
-export interface LaunchConfig {
+interface LaunchConfig extends PolkadotLaunchConfig {
   config: { provider: string };
   settings: Settings;
+  configBasePath: string;
+}
+
+export interface PolkadotLaunchConfig {
   relaychain: RelayChainConfig;
   parachains: ParachainConfig[];
   types: any;
-  hrmpChannels?: HrmpChannelsConfig[];
-  configBasePath: string;
+  hrmp_channels?: HrmpChannelsConfig[];
 }
 
 export interface Settings {
@@ -41,6 +47,8 @@ export interface RelayChainConfig {
   chain_spec_command?: string;
   default_args?: string[];
   default_overrides?: Override[];
+  random_nominators_count?: number;
+  max_nominations?: number;
   nodes?: NodeConfig[];
   node_groups?: NodeGroupConfig[];
   total_node_in_groups?: number;
@@ -51,9 +59,11 @@ export interface NodeConfig {
   name: string;
   image?: string;
   command?: string;
-  commandWithArgs?: string;
+  command_with_args?: string;
   args?: string[];
   validator: boolean;
+  invulnerable: boolean;
+  balance: number;
   env?: envVars[];
   bootnodes?: string[];
   overrides?: Override[];
@@ -99,8 +109,8 @@ export interface ParachainConfig {
 export interface HrmpChannelsConfig {
   sender: number;
   recipient: number;
-  maxCapacity: number;
-  maxMessageSize: number;
+  max_capacity: number;
+  max_message_size: number;
 }
 
 // Computed Network
@@ -113,6 +123,8 @@ export interface ComputedNetwork {
     chain: string;
     chainSpecPath?: string;
     chainSpecCommand?: string;
+    randomNominatorsCount: number;
+    maxNominations: number;
     nodes: Node[];
     overrides: Override[];
     genesis?: JSON | ObjectJSON;
@@ -120,7 +132,7 @@ export interface ComputedNetwork {
   };
   parachains: Parachain[];
   types: any;
-  hrmpChannels?: HrmpChannelsConfig[];
+  hrmp_channels?: HrmpChannelsConfig[];
   configBasePath: string;
   seed: string;
 }
@@ -129,6 +141,7 @@ export interface Node {
   name: string;
   key?: string;
   accounts?: any;
+  balance?: number;
   command?: string;
   commandWithArgs?: string;
   fullCommand?: string;
@@ -136,6 +149,7 @@ export interface Node {
   chain: string;
   chainSpec?: string;
   validator: boolean;
+  invulnerable: boolean;
   args: string[];
   env: envVars[];
   bootnodes: string[];
@@ -172,6 +186,7 @@ export interface Parachain {
   id: number;
   name: string;
   chain?: string;
+  para: PARA;
   addToGenesis: boolean;
   registerPara: boolean;
   cumulusBased: boolean;
@@ -250,4 +265,69 @@ export interface Resources {
 
 export interface MultiAddressByNode {
   [key: string]: string;
+}
+
+export interface TestDefinition {
+  network: string;
+  creds: string;
+  description?: string;
+  assertions: Assertion[];
+}
+
+export interface Assertion {
+  original_line: string;
+  parsed: {
+    fn: string;
+    args: FnArgs;
+  };
+}
+
+export interface FnArgs {
+  node_name?: string;
+  para_id?: number;
+  timeout?: number;
+  target_value?: number;
+  metric_name?: string;
+  buckets?: string[];
+  span_id?: string;
+  op?: string;
+  pattern?: string;
+  match_type?: string;
+  file_path?: string;
+  custom_args?: string;
+  file_or_uri?: string;
+  after?: number;
+  seconds?: number;
+}
+
+// Config interfaces
+interface PL_NodesConfig {
+  name: string;
+  wsPort: number;
+  port: number;
+  flags?: [strings];
+}
+
+interface PL_RelayChainConfig {
+  bin?: string;
+  chain: string;
+  nodes: [NodesConfig];
+  genesis?: JSON | ObjectJSON;
+}
+
+interface PL_ParaChainConfig {
+  bin?: string;
+  id: number;
+  port?: string;
+  balance?: string;
+  nodes: [PL_NodesConfig];
+}
+
+export interface PL_ConfigType {
+  relaychain?: PL_RelayChainConfig;
+  parachains?: [PL_ParaChainConfig];
+  simpleParachains?: [PL_NodesConfig & { id: number }];
+  hrmpChannels?: HrmpChannelsConfig[];
+  types?: any;
+  finalization?: boolean;
 }

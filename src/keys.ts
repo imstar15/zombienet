@@ -1,20 +1,31 @@
-import fs from "fs";
 import { Keyring } from "@polkadot/api";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { u8aToHex } from "@polkadot/util";
-import { mnemonicGenerate, mnemonicToMiniSecret } from "@polkadot/util-crypto";
+import {
+  cryptoWaitReady,
+  mnemonicGenerate,
+  mnemonicToMiniSecret,
+} from "@polkadot/util-crypto";
+import fs from "fs";
 import { Node } from "./types";
 
 function nameCase(string: string) {
   return string.charAt(0).toUpperCase() + string.slice(1);
 }
 
+export async function generateKeyFromSeed(seed: string): Promise<any> {
+  await cryptoWaitReady();
+
+  const sr_keyring = new Keyring({ type: "sr25519" });
+  return sr_keyring.createFromUri(`//${seed}`);
+}
+
 export async function generateKeyForNode(nodeName?: string): Promise<any> {
   await cryptoWaitReady();
 
+  const mnemonic = mnemonicGenerate();
   const seed = nodeName
     ? `//${nameCase(nodeName)}`
-    : u8aToHex(mnemonicToMiniSecret(mnemonicGenerate()));
+    : u8aToHex(mnemonicToMiniSecret(mnemonic));
 
   const sr_keyring = new Keyring({ type: "sr25519" });
   const sr_account = sr_keyring.createFromUri(`${seed}`);
@@ -29,6 +40,7 @@ export async function generateKeyForNode(nodeName?: string): Promise<any> {
   // return the needed info
   return {
     seed,
+    mnemonic,
     sr_account: {
       address: sr_account.address,
       publicKey: u8aToHex(sr_account.publicKey),
@@ -67,6 +79,8 @@ export async function generateKeystoreFiles(
     asgn: node.accounts.sr_account.publicKey,
     para: node.accounts.sr_account.publicKey,
     beef: node.accounts.ec_account.publicKey,
+    nmbs: node.accounts.sr_account.publicKey, // Nimbus
+    rand: node.accounts.sr_account.publicKey, // Randomness (Moonbeam)
   };
 
   for (const [k, v] of Object.entries(keysHash)) {

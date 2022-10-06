@@ -1,26 +1,26 @@
 import execa from "execa";
-import path, { resolve } from "path";
 import { copy as fseCopy } from "fs-extra";
+import path, { resolve } from "path";
+import YAML from "yaml";
 import {
   DEFAULT_DATA_DIR,
   DEFAULT_REMOTE_DIR,
   P2P_PORT,
   PROMETHEUS_PORT,
 } from "../../constants";
-import { getHostIp } from "../../utils/net-utils";
-import { writeLocalJsonFile } from "../../utils/fs-utils";
-const fs = require("fs").promises;
 import { fileMap } from "../../types";
-import { Client, RunCommandResponse, setClient } from "../client";
 import { decorators } from "../../utils/colors";
-import YAML from "yaml";
+import { writeLocalJsonFile } from "../../utils/fs";
+import { getHostIp } from "../../utils/net";
+import { CreateLogTable } from "../../utils/tableCli";
+import { Client, RunCommandResponse, setClient } from "../client";
 import {
   genGrafanaDef,
   genPrometheusDef,
   genTempoDef,
   getIntrospectorDef,
 } from "./dynResourceDefinition";
-import { CreateLogTable } from "../../utils/logger";
+const fs = require("fs").promises;
 
 const debug = require("debug")("zombie::podman::client");
 

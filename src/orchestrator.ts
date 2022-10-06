@@ -1,61 +1,70 @@
-import { Providers } from "./providers/";
+import fs from "fs";
+import path from "path";
+import tmp from "tmp-promise";
+import { generateBootnodeString } from "./bootnode";
 import {
-  LaunchConfig,
-  ComputedNetwork,
-  Node,
-  fileMap,
-  Parachain,
-  MultiAddressByNode,
-} from "./types";
+  addAuraAuthority,
+  addAuthority,
+  addBalances,
+  addBootNodes,
+  addGrandpaAuthority,
+  addHrmpChannelsToGenesis,
+  addParachainToGenesis,
+  addStaking,
+  changeGenesisConfig,
+  clearAuthorities,
+  generateNominators,
+  getNodeKey,
+  readAndParseChainSpec,
+  specHaveSessionsKeys,
+} from "./chain-spec";
 import {
-  generateNetworkSpec,
   generateBootnodeSpec,
+  generateNetworkSpec,
   zombieWrapperPath,
 } from "./configGenerator";
 import {
   GENESIS_STATE_FILENAME,
   GENESIS_WASM_FILENAME,
-  PROMETHEUS_PORT,
-  WS_URI_PATTERN,
-  METRICS_URI_PATTERN,
-  ZOMBIE_WRAPPER,
-  RPC_WS_PORT,
-  RPC_HTTP_PORT,
-  LOCALHOST,
   INTROSPECTOR_POD_NAME,
   INTROSPECTOR_PORT,
-  TRACING_COLLATOR_PORT,
-  TRACING_COLLATOR_SERVICE,
+  LOCALHOST,
+  METRICS_URI_PATTERN,
+  PROMETHEUS_PORT,
+  RPC_HTTP_PORT,
+  RPC_WS_PORT,
   TRACING_COLLATOR_NAMESPACE,
   TRACING_COLLATOR_PODNAME,
+  TRACING_COLLATOR_PORT,
+  TRACING_COLLATOR_SERVICE,
+  WS_URI_PATTERN,
+  ZOMBIE_WRAPPER,
 } from "./constants";
+import { generateKeystoreFiles } from "./keys";
 import { Network, Scope } from "./network";
 import { NetworkNode } from "./networkNode";
-import {
-  clearAuthorities,
-  addAuthority,
-  changeGenesisConfig,
-  addParachainToGenesis,
-  addHrmpChannelsToGenesis,
-  addBootNodes,
-} from "./chain-spec";
-import {
-  generateNamespace,
-  sleep,
-  filterConsole,
-  getLokiUrl,
-} from "./utils/misc-utils";
-import { series } from "./utils/promise-series";
-import { loadTypeDef } from "./utils/fs-utils";
-import tmp from "tmp-promise";
-import fs from "fs";
 import { generateParachainFiles } from "./paras";
+import { Providers } from "./providers/";
+import {
+  ComputedNetwork,
+  fileMap,
+  LaunchConfig,
+  MultiAddressByNode,
+  Node,
+  Parachain,
+} from "./types";
 import { decorators } from "./utils/colors";
-import { generateBootnodeString } from "./bootnode";
-import { generateKeystoreFiles } from "./keys";
-import path from "path";
+import { loadTypeDef } from "./utils/fs";
+import {
+  filterConsole,
+  generateNamespace,
+  getLokiUrl,
+  getSha256,
+  sleep,
+} from "./utils/misc";
+import { series } from "./utils/promise-series";
 
-import { CreateLogTable } from "./utils/logger";
+import { CreateLogTable } from "./utils/tableCli";
 
 const debug = require("debug")("zombie");
 
@@ -66,7 +75,7 @@ filterConsole([
   `API-WS: disconnected`,
 ]);
 
-export interface orchestratorOptions {
+export interface OrcOptionsInterface {
   monitor?: boolean;
   spawnConcurrency?: number;
   inCI?: boolean;
@@ -75,7 +84,7 @@ export interface orchestratorOptions {
 export async function start(
   credentials: string,
   launchConfig: LaunchConfig,
-  options?: orchestratorOptions,
+  options?: OrcOptionsInterface,
 ) {
   const opts = {
     ...{ monitor: false, spawnConcurrency: 1, inCI: false },
@@ -93,7 +102,7 @@ export async function start(
     debug(JSON.stringify(networkSpec, null, 4));
 
     // global timeout to spin the network
-    setTimeout(() => {
+    const timeoutTimer = setTimeout(() => {
       if (network && !network.launched) {
         throw new Error(
           `GLOBAL TIMEOUT (${networkSpec.settings.timeout} secs) `,
@@ -224,12 +233,50 @@ export async function start(
 
     if (!chainSpecContent.genesis.raw) {
       // Chain spec customization logic
+      const relayChainSpec = readAndParseChainSpec(chainSpecFullPathPlain);
+      const keyType = specHaveSessionsKeys(relayChainSpec) ? "session" : "aura";
+
+      // Clear all defaults
       clearAuthorities(chainSpecFullPathPlain);
+
+      // add balances for nodes
+      await addBalances(chainSpecFullPathPlain, networkSpec.relaychain.nodes);
+
+      // add authorities for nodes
+      const validatorKeys = [];
       for (const node of networkSpec.relaychain.nodes) {
-        if (node.validator)
-          await addAuthority(chainSpecFullPathPlain, node.name, node.accounts!);
+        if (node.validator) {
+          validatorKeys.push(node.accounts.sr_stash.address);
+
+          if (keyType === "session") {
+            const key = getNodeKey(node);
+            await addAuthority(chainSpecFullPathPlain, node, key);
+          } else {
+            await addAuraAuthority(
+              chainSpecFullPathPlain,
+              node.name,
+              node.accounts!,
+            );
+            await addGrandpaAuthority(
+              chainSpecFullPathPlain,
+              node.name,
+              node.accounts!,
+            );
+          }
+
+          await addStaking(chainSpecFullPathPlain, node);
+        }
         // Add some extra space until next log
         console.log("\n");
+      }
+
+      if (networkSpec.relaychain.randomNominatorsCount) {
+        await generateNominators(
+          chainSpecFullPathPlain,
+          networkSpec.relaychain.randomNominatorsCount,
+          networkSpec.relaychain.maxNominations,
+          validatorKeys,
+        );
       }
 
       if (networkSpec.relaychain.genesis) {
@@ -270,10 +317,10 @@ export async function start(
           );
       }
 
-      if (networkSpec.hrmpChannels) {
+      if (networkSpec.hrmp_channels) {
         await addHrmpChannelsToGenesis(
           chainSpecFullPathPlain,
-          networkSpec.hrmpChannels,
+          networkSpec.hrmp_channels,
         );
       }
 
@@ -546,6 +593,15 @@ export async function start(
       await addBootNodes(chainSpecFullPath, bootnodes);
       // flush require cache since we change the chain-spec
       delete require.cache[require.resolve(chainSpecFullPath)];
+
+      if (client.providerName === "kubernetes") {
+        // cache the chainSpec with bootnodes
+        const fileBuffer = await fs.promises.readFile(chainSpecFullPath);
+        const fileHash = getSha256(fileBuffer.toString());
+        const parts = chainSpecFullPath.split("/");
+        const fileName = parts[parts.length - 1];
+        await client.uploadToFileserver(chainSpecFullPath, fileName, fileHash);
+      }
     }
 
     const promiseGenerators = networkSpec.relaychain.nodes.map((node: Node) => {
@@ -656,7 +712,7 @@ export async function start(
 
     // Add span collator if is available
     if (networkSpec.settings.tracing_collator_url) {
-      network.tracingCollatorUrl = networkSpec.settings.tracing_collator_url;
+      network.tracing_collator_url = networkSpec.settings.tracing_collator_url;
     } else {
       const servicePort =
         networkSpec.settings.tracing_collator_service_port ||
@@ -696,7 +752,7 @@ export async function start(
                 `service/${serviceName}`,
                 serviceNamespace,
               );
-              network.tracingCollatorUrl = `http://localhost:${tracingPort}`;
+              network.tracing_collator_url = `http://localhost:${tracingPort}`;
             } catch (_) {
               console.log(
                 decorators.yellow(
@@ -711,13 +767,14 @@ export async function start(
             servicePort,
             TRACING_COLLATOR_PODNAME,
           );
-          network.tracingCollatorUrl = `http://localhost:${tracingPort}`;
+          network.tracing_collator_url = `http://localhost:${tracingPort}`;
           break;
       }
     }
 
-    // prevent global timeout
+    // cleanup global timeout
     network.launched = true;
+    clearTimeout(timeoutTimer);
     debug(
       `\t 🚀 LAUNCH COMPLETE under namespace ${decorators.green(namespace)} 🚀`,
     );

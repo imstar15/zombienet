@@ -1,6 +1,7 @@
 #!/bin/bash
+set -uxo pipefail
 
-set -euxo pipefail
+
 
 # add /cfg as first `looking dir` to allow to overrides commands.
 export PATH="{{REMOTE_DIR}}":$PATH
@@ -9,8 +10,17 @@ export PATH="{{REMOTE_DIR}}":$PATH
 pipe=/tmp/zombiepipe
 trap "rm -f $pipe" EXIT
 
+# try mkfifo first and allow to fail
 if [[ ! -p $pipe ]]; then
     mkfifo $pipe
+fi
+
+# set immediately exit on any non 0 exit code
+set -e
+
+# if fails try mknod
+if [[ ! -p $pipe ]]; then
+    mknod $pipe p
 fi
 
 # init empty
@@ -65,7 +75,7 @@ do
         if [[ $line =~ [^0-9]+([0-9]+) ]]; then
             restart "${BASH_REMATCH[1]}"
         else
-            restart
+            restart 0
         fi;
     elif [[ "$line" == "pause" ]]; then
         pause
