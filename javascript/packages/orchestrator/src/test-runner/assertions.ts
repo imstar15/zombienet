@@ -179,6 +179,19 @@ const SystemEvent = ({ node_name, pattern, match_type, timeout }: FnArgs) => {
 };
 
 // Customs
+const CustomTs = ({
+  node_name,
+  file_path,
+  custom_args,
+  op,
+  target_value,
+  timeout,
+}: FnArgs) => {
+  // TODO:
+  // Run the typescript compiler
+  // CustomJs({ node_name, file_path, custom_args, op, target_value, timeout });
+};
+
 const CustomJs = ({
   node_name,
   file_path,
@@ -442,6 +455,7 @@ export default {
   CountLogMatch,
   SystemEvent,
   CustomJs,
+  CustomTs,
   CustomSh,
   ParaBlockHeight,
   ParaIsRegistered,

@@ -24,6 +24,13 @@ const _GRAMMAR: &str = include_str!("zombienet.pest");
 #[grammar = "zombienet.pest"]
 pub struct ZombieNetParser;
 
+#[derive(Debug, PartialEq, Eq)]
+enum ScriptType {
+    JS,
+    TS,
+    SH,
+}
+
 fn parse_name(pair: Pair<Rule>) -> Result<NodeName, ParserError> {
     // get the first inner pair, since we don't want the `:`
     match pair.into_inner().next() {
@@ -155,7 +162,10 @@ fn parse_lines_count_match_pattern_rule(
     Ok((name, match_type, pattern, comparison, timeout))
 }
 
-fn parse_custom_script_rule(record: Pair<Rule>, is_js: bool) -> Result<AssertionKind, ParserError> {
+fn parse_custom_script_rule(
+    record: Pair<Rule>,
+    script_type: ScriptType,
+) -> Result<AssertionKind, ParserError> {
     let mut pairs = record.into_inner();
     let node_name = parse_name(get_pair(&mut pairs, "name")?)?;
     let file_path_str = get_pair(&mut pairs, "file_path")?.as_str();
@@ -186,26 +196,32 @@ fn parse_custom_script_rule(record: Pair<Rule>, is_js: bool) -> Result<Assertion
         }
     }
 
-    if is_js {
-        Ok(AssertionKind::CustomJs {
+    match script_type {
+        ScriptType::JS => Ok(AssertionKind::CustomJs {
             node_name,
             file_path,
             custom_args: args,
             cmp,
             timeout,
-        })
-    } else {
-        Ok(AssertionKind::CustomSh {
+        }),
+        ScriptType::TS => Ok(AssertionKind::CustomTs {
             node_name,
             file_path,
             custom_args: args,
             cmp,
             timeout,
-        })
+        }),
+        ScriptType::SH => Ok(AssertionKind::CustomSh {
+            node_name,
+            file_path,
+            custom_args: args,
+            cmp,
+            timeout,
+        }),
     }
 }
 
-/// Parse a `feature` file and return a `json string`
+/// Parse a `zndsl` file and return a `json string`
 pub fn parse(unparsed_file: &str) -> Result<ast::TestDefinition, errors::ParserError> {
     let mut pairs = match ZombieNetParser::parse(Rule::file, unparsed_file) {
         Ok(p) => p,
@@ -510,7 +526,17 @@ pub fn parse(unparsed_file: &str) -> Result<ast::TestDefinition, errors::ParserE
                 assertions.push(assertion);
             }
             Rule::custom_js => {
-                let parsed = parse_custom_script_rule(record, true)?;
+                let parsed = parse_custom_script_rule(record, ScriptType::JS)?;
+                let assertion = Assertion {
+                    parsed,
+                    original_line,
+                };
+
+                assertions.push(assertion);
+            }
+
+            Rule::custom_ts => {
+                let parsed = parse_custom_script_rule(record, ScriptType::TS)?;
                 let assertion = Assertion {
                     parsed,
                     original_line,
@@ -519,7 +545,7 @@ pub fn parse(unparsed_file: &str) -> Result<ast::TestDefinition, errors::ParserE
                 assertions.push(assertion);
             }
             Rule::custom_sh => {
-                let parsed = parse_custom_script_rule(record, false)?;
+                let parsed = parse_custom_script_rule(record, ScriptType::SH)?;
                 let assertion = Assertion {
                     parsed,
                     original_line,
