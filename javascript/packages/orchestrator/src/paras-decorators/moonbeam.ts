@@ -13,7 +13,7 @@ import { generateKeyForNode as _generateKeyForNode } from "../keys";
 import { ChainSpec, Node } from "../types";
 
 // track 1st staking as default;
-let paraStakingBond: number | undefined;
+let paraStakingBond: bigint | undefined;
 
 export type GenesisNodeKey = [string, string];
 
@@ -118,11 +118,16 @@ async function addParaCustom(specPath: string, node: Node) {
   // parachainStaking
   if (!runtimeConfig?.parachainStaking) return;
 
-  const { sr_account, eth_account } = node.accounts;
+  const { eth_account } = node.accounts;
+  const stakingBond =  paraStakingBond || BigInt('1000000000000000000');
+
+  // Ensure collator account has enough balance to bond and add candidate
+  runtimeConfig.balances.balances.push([eth_account.address, runtimeConfig.balances.balances[0][1]]);
+  // runtimeConfig.balances.balances.push([eth_account.address, BigInt('100000000000000000000')]);
 
   runtimeConfig.parachainStaking.candidates.push([
     eth_account.address,
-    paraStakingBond || 1000000000000,
+    stakingBond,
   ]);
 
   writeChainSpec(specPath, chainSpec);
